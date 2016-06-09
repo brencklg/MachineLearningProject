@@ -1,0 +1,179 @@
+---
+title: "Machine Learning Project"
+author: "George Brenckle"
+date: "May 25, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+setwd('/Users/brencklg/Desktop/RProjects/Coursera/Machine Learning/Project')
+list.files()
+
+library(ggplot2)
+library(dplyr)
+library(caret)
+```
+
+# Predicting How Well People Perform Exercise Activities
+
+## Summary
+
+The purpose of this report is to build a model to predict how well people perform certain exercises.  We have data from accelerometers positioned on the belt, the forearm, the arm, and the dumbell of six subjects who performed barbell lifts.  They performed the lifts correctly and incorrectly in 5 different ways.  This data was obtained from the following work:
+
+> Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+Two datasets were downloaded: a training set consisting of 19,622 observations of 160 variables, and a testing dataset consisting of 20 observations of 160 variables.    
+
+
+## Data Preparation
+
+### Training Data Set
+
+The variables contained in each dataset are as follows:
+
+* X - numeric - an integer of row number
+* user_name - the name of the subject (adelmo, carlitos, charles, eurico, jeremy, or pedro)
+* 3 variables for the timestamp of the activity
+* 2 variables for window: new window(yes or no) and num_window (integer)
+* 38 variables for the accellerometer positioned on the belt
+* 38 variables for the accellerometer positiioned on the arm
+* 38 variables for the Accellerometer positioned on the dumbell
+* 38 variables for the accellerometer positioned on the forearm
+* classe - a factor with 5 levels: A, B, C, D, E indicating whether or not the exercise was performed correctly
+
+The variable classe is the one we want to correctly predict.
+
+There are 19622 observations in the training file.  Observations were taken for each participant for each exercise and averaged over a window.  For each window, statistical averages were provided (max, min, mean, sd, var, kurtosis, skewness).  There are 406 observations with these variables calculated.  For the remaining observations, these variables are NA.  They were pulled out of the training data frame leaving a second data frame, subtrn, with 19216 observations and no missing values.
+
+In subtrn, there are observations for each of the six participants: adelmo:3809, carlitos:3056, charles:3455, eurico:3016, jeremy:3325, pedro:2555.  There multiple observations for each type of avtivity as noted in the classe variable:  A:5471, B:3718, C:3352, D:3147, E:3528.  Method "A" is the correct method, while mthods B thru E are the same exercise performed incorrectly in the 4 most common ways.
+
+### Testing Data Set
+
+This is not a testing data set in terms of testing/validating the model.  It consists of 20 observations corresponding to the 20 test questions on the final quiz.  There is no "classe" variable indicating the actual exercise class.  Instead there is a problem_id variable numbered 1-20 for each problem in the quiz.  There are no averaged values (max, min, var, avg, skewness, kurtosis, etc.) in the test set.
+
+### Final Data Sets
+
+The datasets subtrn and subtst are derived from the training and testing data sets.  All of the averaged variable are removed and there is no missing data.
+
+In subtrn there are 19216 observations of 60 variables.  There are 13 measurements for each of the 4 sensors (belt, arm, forearm and dumbbell).  The measurements consist of roll, pitch, yaw, total_acceleration, and the x/y/z measurements for the gyro, pitch, accelerometerm and magnet.  The last varialbe in subtrn is "classe".
+
+In subtst, the same variables are kept for the 20 testing observations.
+
+```{r}
+download.file('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv',
+              'training.csv')
+download.file('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv',
+              'testing.csv')
+
+training <- read.table(file='training.csv', header=TRUE, sep=',')
+testing <- read.table(file='testing.csv', header=TRUE, sep=',')
+
+subtrain <- filter(training, !is.na(avg_roll_belt))
+subtrn <- training %>% filter(is.na(avg_roll_belt)) %>%
+          select(X:total_accel_belt, gyros_belt_x:magnet_belt_z,
+                 roll_arm:total_accel_arm, gyros_arm_x:magnet_arm_z,
+                 roll_dumbbell:yaw_dumbbell, total_accel_dumbbell,
+                 gyros_dumbbell_x:magnet_dumbbell_z,
+                 roll_forearm:yaw_forearm, total_accel_forearm, gyros_forearm_x:magnet_forearm_z,
+                 classe)
+
+
+subtst <- testing %>%
+          select(X:total_accel_belt, gyros_belt_x:magnet_belt_z,
+               roll_arm:total_accel_arm, gyros_arm_x:magnet_arm_z,
+               roll_dumbbell:yaw_dumbbell, total_accel_dumbbell,
+               gyros_dumbbell_x:magnet_dumbbell_z,
+               roll_forearm:yaw_forearm, total_accel_forearm, gyros_forearm_x:magnet_forearm_z,
+               problem_id)
+```
+
+## Exploratory Analysis
+
+A series of boxplots were examined for each of the 13 variables associated with each sensor measurement. The plots were examined to find variables that produced significantly different results for each class measurement.  From this exploratory analysis, the following 17 variables were selected to use in fitting the model.
+
+* roll_belt
+* yaw_belt
+* total_accel_belt
+* accel_belt_y
+* accel_belt_z
+* magnet_arm_x
+* magnet_arm_y
+* accel_arm_x
+* roll_forearm
+* pitch_forearm
+* yaw_forearm
+* accell_forearm_ x
+* magnet_forearm_x,
+* roll_dumbbell
+* pitch_dumbbell
+* yaw_dumbbell
+
+The data frames containing just these variables were named finaltrn (19,216 obs, 17 variables), and finaltst(20 observations, 17 variables).
+
+Finally the training dataframe was broken into a training and testing sets names trnfinal(13453 obs) and tstfinal(5736 obs). the trnfinalset will be used for model training and the tstfinal set will be used for validation 
+
+```{r, echo=FALSE}
+finaltrn <- subtrn %>%
+            select(roll_belt, yaw_belt, total_accel_belt, accel_belt_y, accel_belt_z,
+                   magnet_arm_x, magnet_arm_y, accel_arm_x,
+                   roll_forearm, pitch_forearm, yaw_forearm, accel_forearm_x, magnet_forearm_x,
+                   roll_dumbbell, pitch_dumbbell, yaw_dumbbell, classe)
+
+finaltst <- testing %>%
+        select(roll_belt, yaw_belt, total_accel_belt, accel_belt_y, accel_belt_z,
+               magnet_arm_x, magnet_arm_y, accel_arm_x,
+               roll_forearm, pitch_forearm, yaw_forearm, accel_forearm_x, magnet_forearm_x,
+               roll_dumbbell, pitch_dumbbell, yaw_dumbbell, problem_id)
+
+inTrain <- createDataPartition(y=finaltrn$classe, p=0.7, list=FALSE)
+trnfinal <- finaltrn[inTrain,]; tstfinal <- finaltrn[-inTrain,]
+```
+
+## Model Fitting
+
+I chose to use a random forest model to fit the data.  This is the approach used by Velloso et. al. in their paper, and it can be very accurate.  It however is a slow process, taking up to 7 hours to fit.
+
+The model was trained using the trnfinal data set (13,453 observations)
+
+```{r}
+starttime <- Sys.time()
+modFit7 <- train(classe ~ ., method='rf', data=trnfinal, prox=TRUE)
+endtime <- Sys.time()
+endtime - starttime
+
+```
+
+
+## Results
+
+The fit to the model looks very good.  In examining the confusionMatrix, the model separated the data almost perfectly.  It took about 3 hours and 40 minutes to runthe model.
+
+```{r}
+modFit7
+confusionMatrix(predict(modFit7, newdata=trnfinal), trnfinal$classe)
+```
+
+
+### Cross Validation
+
+When the model was applied to the tstfinal data set, there was some decrease in the perfectnes of the fit, but the result was still very good.
+
+```{r}
+
+confusionMatrix(predict(modFit7, newdata=tstfinal), tstfinal$classe)
+```
+
+## Run Against Testing Set
+
+The model was used to predict the class for the 20 observations in the testing set
+
+```{r}
+
+predictions <- predict(modFit7, newdata=finaltst)
+predictions
+```
+
+
+ 
